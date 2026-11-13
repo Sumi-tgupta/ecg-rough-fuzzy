@@ -1,9 +1,23 @@
+# Python
 __pycache__/
-*.pyc
-.venv/
-data/*
-!data/.gitkeep
-models/*.joblib
-experiments/*/
-!experiments/.gitkeep
+*.py[cod]
 .pytest_cache/
+.venv/
+venv/
+.env
+
+# Local datasets and generated experiment artifacts
+/data/mitdb/
+/experiments/*
+!/experiments/.gitkeep
+/models/*
+!/models/.gitkeep
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local logs
+*.log

@@ -6,31 +6,18 @@ Per-channel features are prefixed c0_, c1_ ... RR features are channel independe
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-import pywt
+try:
+    import pywt
+except ImportError:  # dependency checked at wavelet-feature execution time
+    pywt = None
 from scipy import stats
 from config import FS, get_logger
+from modules.feature_schema import RR_FEATURES, CHANNEL_FEATURES as CH_FEATURES, feature_names, feature_domain
 from modules import preprocessing as pp, rpeak_detection as rd, segmentation as sg
 
 log = get_logger("features")
 
-RR_FEATURES = ["rr_prev", "rr_next", "rr_mean", "rr_std", "rr_ratio_prev", "rr_ratio_next", "heart_rate"]
-CH_FEATURES = ["r_amp", "qrs_dur", "energy", "variance", "skewness", "kurtosis", "ptp", "area",
-               "mean_pre_r", "mean_post_r", "t_wave_amp", "dom_freq", "psd_0p5_5", "psd_5_15",
-               "psd_15_40", "spec_entropy", "wav_a4", "wav_d4", "wav_d3", "wav_d2"]
 GROUPS = {"RR / rhythm": RR_FEATURES}
-
-
-def feature_names(n_channels: int) -> list:
-    return RR_FEATURES + [f"c{c}_{f}" for c in range(n_channels) for f in CH_FEATURES]
-
-
-def feature_domain(name: str) -> str:
-    base = name.split("_", 1)[1] if name[:1] == "c" and name[1:2].isdigit() else name
-    if name in RR_FEATURES: return "RR / rhythm"
-    if base in ("psd_0p5_5", "psd_5_15", "psd_15_40", "dom_freq", "spec_entropy"): return "Frequency"
-    if base.startswith("wav_"): return "Wavelet"
-    if base in ("variance", "skewness", "kurtosis"): return "Statistical"
-    return "Time / morphology"
 
 
 def rr_features(rpeaks: np.ndarray, fs: float) -> pd.DataFrame:
@@ -86,11 +73,14 @@ def channel_features(beats: np.ndarray, r0: int, fs: float) -> pd.DataFrame:
     freqs = np.fft.rfftfreq(nfft, 1 / fs)
     def band(a, b): return spec[:, (freqs >= a) & (freqs < b)].sum(axis=1)
     tot = spec[:, (freqs >= 0.5) & (freqs <= 40)].sum(axis=1) + 1e-12
-    f["dom_freq"] = freqs[(freqs >= 0.5)][spec[:, freqs >= 0.5].argmax(axis=1)]
+    valid_freq = (freqs >= 0.5) & (freqs <= 40.0)
+    f["dom_freq"] = freqs[valid_freq][spec[:, valid_freq].argmax(axis=1)]
     f["psd_0p5_5"], f["psd_5_15"], f["psd_15_40"] = band(0.5, 5) / tot, band(5, 15) / tot, band(15, 40) / tot
     p = spec[:, (freqs >= 0.5) & (freqs <= 40)] / tot[:, None]
     f["spec_entropy"] = -(p * np.log(p + 1e-12)).sum(axis=1)
     # wavelet (db4, level 4) relative energies
+    if pywt is None:
+        raise ImportError("PyWavelets is required for ECG wavelet features. Install it with: pip install PyWavelets")
     coeffs = pywt.wavedec(beats, "db4", level=4, axis=1)       # [cA4, cD4, cD3, cD2, cD1]
     en = np.stack([np.sum(c ** 2, axis=1) for c in coeffs], axis=1)
     en = en / (en.sum(axis=1, keepdims=True) + 1e-12)
@@ -105,6 +95,13 @@ def process_signal(signal: np.ndarray, fs: float, rpeaks: np.ndarray | None = No
     sig = np.atleast_2d(np.asarray(signal, dtype=float))
     if sig.shape[0] < sig.shape[1]:
         sig = sig.T
+    if sig.ndim != 2 or sig.shape[0] < 2 or sig.shape[1] < 1:
+        raise ValueError("signal must contain at least two samples and one channel")
+    primary = int(primary)
+    if not 0 <= primary < sig.shape[1]:
+        raise ValueError(f"primary channel index {primary} is outside {sig.shape[1]} available channels")
+    if not np.isfinite(sig).any():
+        raise ValueError("signal contains no finite samples")
     if fs != FS:
         sig = pp.resample_to(sig, fs, FS)
         if rpeaks is not None:
@@ -143,12 +140,21 @@ def build_record_features(record, primary: int = 0, max_channels: int = 2) -> pd
     f = out["features"].copy()
     # map every refined R peak back to the nearest annotation (labels)
     ann, cls, sym = record.ann_samples, record.ann_classes, record.ann_symbols
-    ann_ds = np.round(ann * FS / record.fs).astype(int) if record.fs != FS else ann
-    order = np.searchsorted(ann_ds, f["r_sample"].values)
-    order = np.clip(order, 1, len(ann_ds) - 1)
-    left, right = ann_ds[order - 1], ann_ds[order]
-    pick = np.where(np.abs(f["r_sample"].values - left) <= np.abs(right - f["r_sample"].values), order - 1, order)
-    ok = np.abs(ann_ds[pick] - f["r_sample"].values) <= int(0.1 * FS)
+    if len(ann) == 0:
+        raise ValueError(f"Record {record.record_id} contains no AAMI-mappable beat annotations")
+    ann_ds = np.round(ann * FS / record.fs).astype(int) if record.fs != FS else np.asarray(ann, dtype=int)
+    beat_samples = f["r_sample"].to_numpy(dtype=int)
+    # Assign each refined beat to its nearest reference annotation without assuming >= 2 annotations.
+    if len(ann_ds) == 1:
+        pick = np.zeros(len(beat_samples), dtype=int)
+    else:
+        order = np.searchsorted(ann_ds, beat_samples)
+        right_idx = np.clip(order, 0, len(ann_ds) - 1)
+        left_idx = np.clip(order - 1, 0, len(ann_ds) - 1)
+        left_dist = np.abs(beat_samples - ann_ds[left_idx])
+        right_dist = np.abs(ann_ds[right_idx] - beat_samples)
+        pick = np.where(left_dist <= right_dist, left_idx, right_idx)
+    ok = np.abs(ann_ds[pick] - beat_samples) <= int(0.1 * FS)
     f = f.loc[ok].reset_index(drop=True)
     pick = pick[ok]
     f.insert(0, "record", record.record_id)

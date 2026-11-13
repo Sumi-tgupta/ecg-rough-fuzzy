@@ -10,33 +10,79 @@ import pandas as pd
 
 
 class Discretizer:
-    """Equal-frequency discretisation; cut points learned on TRAIN data only."""
+    """Equal-frequency discretisation; cuts and imputers are fitted on TRAIN data only."""
+
     def __init__(self, n_bins: int = 4):
-        self.n_bins, self.cuts_, self.names_ = n_bins, {}, []
+        if int(n_bins) < 2:
+            raise ValueError("n_bins must be at least 2")
+        self.n_bins = int(n_bins)
+        self.cuts_, self.names_, self.medians_ = {}, [], None
 
     def fit(self, X: pd.DataFrame):
-        self.names_ = list(X.columns)
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+        if X.empty or X.shape[1] == 0:
+            raise ValueError("Discretizer requires a non-empty feature matrix")
+        if not X.columns.is_unique:
+            raise ValueError("Feature names must be unique")
+        try:
+            numeric = X.apply(pd.to_numeric, errors="raise").astype(float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Rough-set features must be numeric") from exc
+        numeric = numeric.replace([np.inf, -np.inf], np.nan)
+        self.names_ = list(numeric.columns)
+        self.medians_ = numeric.median().fillna(0.0).to_numpy(dtype=float)
+        values = numeric.fillna(pd.Series(self.medians_, index=self.names_)).to_numpy(dtype=float)
         qs = np.linspace(0, 1, self.n_bins + 1)[1:-1]
-        for c in self.names_:
-            cuts = np.unique(np.nanquantile(X[c].values.astype(float), qs))
-            self.cuts_[c] = cuts
+        for idx, name in enumerate(self.names_):
+            self.cuts_[name] = np.unique(np.quantile(values[:, idx], qs))
+        self.n_features_in_ = len(self.names_)
         return self
 
     def transform(self, X: pd.DataFrame) -> np.ndarray:
-        return np.column_stack([np.searchsorted(self.cuts_[c], X[c].values.astype(float), side="right")
-                                for c in self.names_]).astype(np.int64)
+        if self.medians_ is None:
+            raise RuntimeError("Discretizer must be fitted before transform")
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X, columns=self.names_)
+        missing = [name for name in self.names_ if name not in X.columns]
+        if missing:
+            raise ValueError(f"Input is missing fitted discretiser columns: {missing}")
+        numeric = X.loc[:, self.names_].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+        values = numeric.fillna(pd.Series(self.medians_, index=self.names_)).to_numpy(dtype=float)
+        return np.column_stack([
+            np.searchsorted(self.cuts_[name], values[:, idx], side="right")
+            for idx, name in enumerate(self.names_)
+        ]).astype(np.int64)
 
 
 # ---------------------------------------------------------------- core RST primitives
 def indiscernibility_classes(D: np.ndarray, attrs) -> np.ndarray:
-    """Equivalence-class id for each object under IND(attrs)."""
-    if len(attrs) == 0:
+    """Equivalence-class id for each object under IND(attrs).
+
+    A single row-wise unique operation is substantially faster than repeatedly
+    hashing one attribute at a time during QuickReduct's many subset checks.
+    """
+    D = np.asarray(D)
+    if D.ndim != 2:
+        raise ValueError("D must be a two-dimensional discretised decision table")
+    attrs = list(attrs)
+    if not attrs:
         return np.zeros(D.shape[0], dtype=np.int64)
-    gid = np.zeros(D.shape[0], dtype=np.int64)
-    for a in attrs:
-        gid = gid * (D[:, a].max() + 1) + D[:, a]
-        _, gid = np.unique(gid, return_inverse=True)
-    return gid
+    if min(attrs) < 0 or max(attrs) >= D.shape[1]:
+        raise IndexError("An indiscernibility attribute index is outside D")
+    _, gid = np.unique(D[:, attrs], axis=0, return_inverse=True)
+    return gid.astype(np.int64, copy=False)
+
+
+def _encode_decisions(y: np.ndarray, n_labels: int) -> np.ndarray:
+    """Map arbitrary class labels to contiguous integer decision codes."""
+    values = np.asarray(y)
+    if values.ndim != 1:
+        raise ValueError("Decision labels must be one-dimensional")
+    _, encoded = np.unique(values, return_inverse=True)
+    if len(np.unique(values)) > int(n_labels):
+        raise ValueError("n_labels is smaller than the number of observed decision classes")
+    return encoded.astype(np.int64)
 
 
 def _class_label_table(gid: np.ndarray, y: np.ndarray, n_labels: int) -> np.ndarray:
@@ -46,6 +92,7 @@ def _class_label_table(gid: np.ndarray, y: np.ndarray, n_labels: int) -> np.ndar
 
 def positive_region_mask(D, y, attrs, n_labels) -> np.ndarray:
     """Objects whose equivalence class lies wholly inside one decision class (union of lower approximations)."""
+    y = _encode_decisions(y, n_labels)
     gid = indiscernibility_classes(D, attrs)
     tab = _class_label_table(gid, y, n_labels)
     consistent = (tab > 0).sum(axis=1) == 1
@@ -59,6 +106,7 @@ def dependency_degree(D, y, attrs, n_labels) -> float:
 
 def approximations(D, y, attrs, n_labels) -> pd.DataFrame:
     """Lower/upper approximation sizes, boundary and accuracy of approximation per decision class."""
+    y = _encode_decisions(y, n_labels)
     gid = indiscernibility_classes(D, attrs)
     tab = _class_label_table(gid, y, n_labels)
     sizes = tab.sum(axis=1)
@@ -88,9 +136,22 @@ def core_attributes(D, y, n_labels, tol: float = 1e-12) -> list:
 def quick_reduct(D, y, n_labels, tolerance: float = 0.0, max_attrs: int | None = None) -> dict:
     """Greedy positive-region reduct: repeatedly add the attribute with the largest gamma increase
     until gamma(R) >= gamma(C) - tolerance, then drop redundant attributes (backward elimination)."""
+    y = _encode_decisions(y, n_labels)
+    if D.ndim != 2 or D.shape[0] == 0 or D.shape[1] == 0:
+        raise ValueError("QuickReduct requires a non-empty two-dimensional decision table")
+    if len(y) != D.shape[0]:
+        raise ValueError("Decision labels length does not match the decision table")
     n_attr = D.shape[1]
     g_full = dependency_degree(D, y, list(range(n_attr)), n_labels)
     reduct, history, g_cur = [], [], 0.0
+    if g_full <= 1e-12:
+        single = [dependency_degree(D, y, [a], n_labels) for a in range(n_attr)]
+        best = int(np.argmax(single))
+        reduct = [best]
+        history.append({"step": 1, "added": best, "gamma_before": 0.0,
+                        "gamma_after": float(single[best]), "significance": float(single[best])})
+        return {"reduct": reduct, "gamma_full": g_full,
+                "gamma_reduct": dependency_degree(D, y, reduct, n_labels), "history": history}
     while g_cur < g_full - tolerance - 1e-12 and len(reduct) < (max_attrs or n_attr):
         rest = [a for a in range(n_attr) if a not in reduct]
         gains = {a: dependency_degree(D, y, reduct + [a], n_labels) for a in rest}
@@ -114,13 +175,20 @@ class RoughSetSelector:
         self.n_bins, self.tolerance, self.max_per_class, self.seed = n_bins, tolerance, max_per_class, seed
 
     def fit(self, X: pd.DataFrame, y: np.ndarray):
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+        y = np.asarray(y)
+        if X.empty or X.shape[1] == 0 or y.ndim != 1 or len(y) != len(X):
+            raise ValueError("RoughSetSelector requires non-empty X and one label per row")
+        if self.max_per_class < 1:
+            raise ValueError("max_per_class must be positive")
         rng = np.random.default_rng(self.seed)
         self.feature_names_ = list(X.columns)
-        self.classes_ = sorted(np.unique(y))
-        yi = np.array([self.classes_.index(v) for v in y])
+        self.classes_ = sorted(np.unique(y).tolist())
+        yi = np.array([self.classes_.index(v) for v in y], dtype=np.int64)
         idx = np.concatenate([rng.choice(np.where(yi == k)[0], min(self.max_per_class, (yi == k).sum()), replace=False)
-                              for k in range(len(self.classes_))])
-        Xs, ys = X.iloc[idx], yi[idx]                    # class-balanced training sample (train only)
+                              for k in range(len(self.classes_)) if (yi == k).sum() > 0])
+        Xs, ys = X.iloc[idx], yi[idx]                    # class-balanced sample from training rows only
         self.disc_ = Discretizer(self.n_bins).fit(Xs)
         D = self.disc_.transform(Xs)
         n_lab = len(self.classes_)

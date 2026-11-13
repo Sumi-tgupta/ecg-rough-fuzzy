@@ -6,7 +6,15 @@ from scipy import signal as sps
 
 def detect_rpeaks(x, fs, refractory: float = 0.25) -> np.ndarray:
     x = np.asarray(x, dtype=float)
-    sos = sps.butter(2, [5, min(15, 0.45 * fs)], btype="band", fs=fs, output="sos")
+    if x.ndim != 1 or len(x) < 8:
+        raise ValueError("R-peak detection requires a one-dimensional signal with at least 8 samples")
+    if fs <= 0 or refractory <= 0:
+        raise ValueError("fs and refractory must be positive")
+    high = min(15.0, 0.45 * fs)
+    if high <= 5.0:
+        raise ValueError("Sampling frequency is too low for the 5-15 Hz detector band")
+    x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+    sos = sps.butter(2, [5, high], btype="band", fs=fs, output="sos")
     f = sps.sosfiltfilt(sos, x)
     sq = np.gradient(f) ** 2
     win = max(int(0.12 * fs), 1)
@@ -28,14 +36,35 @@ def refine_peaks(x, peaks, fs, half_window: float = 0.05) -> np.ndarray:
 
 
 def match_detections(detected, reference, fs, tol: float = 0.075) -> dict:
-    """Sensitivity / PPV of detected R peaks against reference annotations."""
-    tol_s = int(tol * fs)
-    ref, det = np.asarray(reference), np.asarray(detected)
-    if len(ref) == 0 or len(det) == 0:
-        return {"tp": 0, "fn": len(ref), "fp": len(det), "sensitivity": 0.0, "ppv": 0.0}
-    idx = np.searchsorted(det, ref)
-    tp = sum(1 for r, i in zip(ref, idx)
-             if np.min(np.abs(det[max(i - 1, 0):i + 1] - r)) <= tol_s)
-    fp = max(len(det) - tp, 0)
-    return {"tp": tp, "fn": len(ref) - tp, "fp": fp,
-            "sensitivity": tp / len(ref), "ppv": tp / max(tp + fp, 1)}
+    """One-to-one sensitivity / PPV matching against reference annotations.
+
+    A detected peak and a reference annotation can contribute to at most one
+    true positive.  This avoids over-counting when detections cluster around
+    the same reference beat.
+    """
+    if fs <= 0 or tol < 0:
+        raise ValueError("fs must be positive and tol must be non-negative")
+    tol_samples = int(round(tol * fs))
+    ref = np.sort(np.asarray(reference, dtype=int))
+    det = np.sort(np.asarray(detected, dtype=int))
+    i = j = tp = 0
+    matched = []
+    while i < len(ref) and j < len(det):
+        delta = int(det[j] - ref[i])
+        if abs(delta) <= tol_samples:
+            tp += 1
+            matched.append((int(ref[i]), int(det[j])))
+            i += 1
+            j += 1
+        elif delta < -tol_samples:
+            j += 1
+        else:
+            i += 1
+    fn = len(ref) - tp
+    fp = len(det) - tp
+    return {
+        "tp": int(tp), "fn": int(fn), "fp": int(fp),
+        "sensitivity": float(tp / len(ref)) if len(ref) else 0.0,
+        "ppv": float(tp / (tp + fp)) if (tp + fp) else 0.0,
+        "matched_pairs": matched,
+    }

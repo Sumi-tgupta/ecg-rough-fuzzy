@@ -1,17 +1,37 @@
 const E=ECG,$=s=>document.querySelector(s),S={view:'overview',sel:0,t0:0,fz:0},FN=E.FN;
 const COL={N:'#4ade80',S:'#38bdf8',V:'#f87171',F:'#fbbf24',Q:'#c084fc'},f4=v=>isFinite(v)?(Math.abs(v)>=100?v.toFixed(0):v.toPrecision(3)):'–';
 const pill=c=>`<span class="pill" style="background:${COL[c]}">${c}</span>`,pc=v=>(100*v).toFixed(1)+'%',kpi=(a,b)=>`<div class="kpi"><b>${a}</b><span>${b}</span></div>`;
-const PAGES={overview:'Overview',analyze:'ECG Analysis & Prediction',features:'Feature Extraction',rough:'Rough Set Analysis',fuzzy:'Fuzzy Logic Engine',eval:'Model Evaluation'};
-$('#nav').innerHTML=Object.entries(PAGES).map(([k,v])=>`<button data-k="${k}">${v}</button>`).join('');
-$('#nav').onclick=e=>{const k=e.target.dataset.k;if(k)go(k)};
-function go(k){S.view=k;document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.k===k));$('#v').innerHTML=R[k]();(A[k]||(()=>{}))()}
+const PAGES={
+ overview:{label:'Overview',eyebrow:'RESEARCH OVERVIEW',title:'ECG research, made interpretable.',subtitle:'Explore signal processing, rough-set feature reduction and fuzzy-rule classification in one research workspace.'},
+ analyze:{label:'ECG Analysis',eyebrow:'SIGNAL WORKSPACE',title:'Read the signal. Inspect every beat.',subtitle:'Generate a controlled ECG example or upload a signal to inspect preprocessing, detected R-peaks and experimental class assignments.'},
+ features:{label:'Feature Extraction',eyebrow:'BEAT CHARACTERISATION',title:'From waveform to measurable features.',subtitle:'Inspect beat-level descriptors and understand which attributes are retained by the current rough-set reduct.'},
+ rough:{label:'Rough Set Analysis',eyebrow:'FEATURE REDUCTION',title:'Find the smallest informative feature set.',subtitle:'Explore discretisation, dependency degree, the QuickReduct search path and core attributes.'},
+ fuzzy:{label:'Fuzzy Logic Engine',eyebrow:'INTERPRETABLE CLASSIFICATION',title:'See how fuzzy rules reach a decision.',subtitle:'Inspect learned membership functions, rule antecedents, firing strengths and class-level aggregation.'},
+ eval:{label:'Model Evaluation',eyebrow:'EXPERIMENTAL RESULTS',title:'Compare models with the right context.',subtitle:'Review synthetic held-out results, confusion matrices and per-class performance. These metrics are not clinical evidence.'}
+};
+const NAV_ICON={
+ overview:'<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>',
+ analyze:'<svg viewBox="0 0 24 24"><path d="M3 12h4l2.4-6 4.1 12 2.5-6H21"/></svg>',
+ features:'<svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15l3-4 3 2 5-7"/><circle cx="8" cy="15" r="1"/><circle cx="11" cy="11" r="1"/><circle cx="14" cy="13" r="1"/></svg>',
+ rough:'<svg viewBox="0 0 24 24"><path d="M12 3 4 7.5 12 12l8-4.5L12 3Z"/><path d="m4 12 8 4.5 8-4.5M4 16.5 12 21l8-4.5"/></svg>',
+ fuzzy:'<svg viewBox="0 0 24 24"><path d="M3 18c3-10 5-10 8 0s5 10 10-12"/><path d="M3 6h18" stroke-dasharray="2 3"/></svg>',
+ eval:'<svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><rect x="7" y="11" width="3" height="6" rx=".7"/><rect x="12" y="8" width="3" height="9" rx=".7"/><rect x="17" y="4" width="3" height="13" rx=".7"/></svg>'
+};
+$('#nav').innerHTML=Object.entries(PAGES).map(([k,v])=>`<button class="nav-item ${k==='overview'?'on':''}" type="button" data-k="${k}" aria-current="${k==='overview'?'page':'false'}">${NAV_ICON[k]}<span>${v.label}</span></button>`).join('');
+$('#nav').onclick=e=>{const b=e.target.closest('button[data-k]');if(b)go(b.dataset.k)};
+function setTheme(theme){document.documentElement.dataset.theme=theme;try{localStorage.setItem('pulselab-theme',theme)}catch(_){};const dark=theme==='dark';$('#theme-toggle').setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');$('#theme-toggle').setAttribute('aria-pressed',String(dark));document.querySelector('meta[name="theme-color"]').content=dark?'#101114':'#f5f5f7';if(S.view==='analyze'&&S.rec)draw();if(S.view==='fuzzy'&&S.M)A.fuzzy()}
+$('#theme-toggle').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+const closeSidebar=()=>{document.body.classList.remove('sidebar-open');$('#sidebar-toggle').setAttribute('aria-expanded','false')};
+$('#sidebar-toggle').onclick=()=>{const open=!document.body.classList.contains('sidebar-open');document.body.classList.toggle('sidebar-open',open);$('#sidebar-toggle').setAttribute('aria-expanded',String(open))};
+$('#sidebar-backdrop').onclick=closeSidebar;
+function go(k){if(!PAGES[k])return;S.view=k;document.querySelectorAll('#nav button').forEach(b=>{const active=b.dataset.k===k;b.classList.toggle('on',active);b.setAttribute('aria-current',active?'page':'false')});const meta=PAGES[k];$('#breadcrumb-current').textContent=meta.label;$('#page-eyebrow').textContent=meta.eyebrow;$('#page-title').textContent=meta.title;$('#page-subtitle').textContent=meta.subtitle;document.title=`${meta.label} · PulseLab`;$('#v').innerHTML=R[k]();(A[k]||(()=>{}))();closeSidebar()}
 function plot(cv,ser,o={}){const d=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*d;cv.height=h*d;const g=cv.getContext('2d');g.scale(d,d);
  const win=o.win||8,i0=Math.round((o.t0||0)*E.FS),i1=Math.min(ser[0].y.length,i0+Math.round(win*E.FS));let mn=1e9,mx=-1e9;
  for(const s of ser)for(let i=i0;i<i1;i++){mn=Math.min(mn,s.y[i]);mx=Math.max(mx,s.y[i])}const pad=(mx-mn)*.1||1;mn-=pad;mx+=pad;
  const X=i=>(i-i0)/(i1-i0)*w,Y=v=>h-(v-mn)/(mx-mn)*h;g.lineWidth=1.2;
  for(const s of ser){g.strokeStyle=s.c;g.beginPath();for(let i=i0;i<i1;i++)i===i0?g.moveTo(X(i),Y(s.y[i])):g.lineTo(X(i),Y(s.y[i]));g.stroke()}
  for(const m of o.marks||[])if(m.i>=i0&&m.i<i1){g.fillStyle=m.c;g.beginPath();g.arc(X(m.i),Y(ser[0].y[m.i]),m.sel?6:4,0,6.3);g.fill();g.font='11px sans-serif';g.fillText(m.t||'',X(m.i)-3,Y(ser[0].y[m.i])-9)}
- g.fillStyle='#8a98b3';g.font='11px sans-serif';for(let t=Math.ceil(i0/E.FS);t<=i1/E.FS;t++)g.fillText(t+'s',X(t*E.FS)+2,h-3)}
+ g.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted').trim()||'#8a98b3';g.font='11px sans-serif';for(let t=Math.ceil(i0/E.FS);t<=i1/E.FS;t++)g.fillText(t+'s',X(t*E.FS)+2,h-3)}
 // ---------- analysis ----------
 function analyze(sig,fs,ann,label){const p=E.process(sig,fs),pr=p.rows.map(r=>E.predict(S.M.mB,r.f));S.rec={p,pr,ann,label,fs:E.FS};S.sel=0;S.t0=0;if(ann)S.rec.det=E.detStats(p.rp,ann)}
 function parseCSV(txt){const L=txt.split(/\r?\n/).map(l=>l.trim().split(/[,;\s\t]+/).map(Number)).filter(r=>r.length&&r.every(Number.isFinite));if(!L.length)throw Error('No numeric rows found');
@@ -21,7 +41,7 @@ const R={
 overview:()=>{const M=S.M;return`<div class="card"><h2>Hybrid Rough-Fuzzy intelligent system for ECG arrhythmia detection</h2>
 <p>Pipeline: <b>ECG → median-baseline + zero-phase band-pass (0.5–40 Hz) → Pan-Tompkins R-peaks → beat segmentation (−250/+400 ms) → 25 beat features → Rough-Set reduct (QuickReduct) → Fuzzy rule base (Low/Med/High, product t-norm) → AAMI class (N, S, V, F, Q)</b>.</p>
 <div class="grid">${kpi(M.nTrain,'training beats')}${kpi(M.nTest,'held-out test beats')}${kpi(FN.length+' → '+M.rough.reduct.length,'features → rough-set reduct')}${kpi(M.mB.rules.length,'fuzzy rules (model B)')}${kpi(pc(M.evB.acc),'accuracy · B Rough+Fuzzy')}${kpi(pc(M.evA.acc),'accuracy · A Fuzzy (all)')}</div></div>
-<div class="card"><h2>Important — what this web app is</h2><p class="mut">This is a fully client-side port of the repository's methodology (see docs/METHODOLOGY.md). The MIT-BIH database is not bundled, so the models here are trained in your browser, on load, on <b>synthetic ECG</b> (Gaussian-wave beat morphologies with baseline wander, noise and 50 Hz interference) using inter-record splits. Metrics therefore describe this synthetic benchmark, <b>not</b> real MIT-BIH performance. Wavelet features use Haar instead of db4. Upload your own single-lead CSV in the Analysis tab to run the pipeline on real signals. Academic prototype — NOT medically validated; never use for diagnosis.</p></div>
+<div class="card"><h2>Important — what this web app is</h2><p class="mut">This is a client-side research demonstration (see docs/METHODOLOGY.md). The MIT-BIH database is not bundled, so the models train on <b>synthetic ECG</b> when the page loads. Metrics describe this synthetic benchmark, <b>not</b> MIT-BIH performance. The browser uses 25 single-lead features and Haar wavelets; the Python scaffold has a different feature definition. A CSV upload is processed for exploratory inspection, but class predictions still come from the synthetic-trained model — the upload does not retrain or validate it. Academic prototype; not for diagnosis or clinical decisions.</p></div>
 <div class="card"><h2>AAMI classes</h2>${E.CLS.map(c=>`<div>${pill(c)} ${E.CN[c]}</div>`).join('')}</div>`},
 analyze:()=>`<div class="card"><div class="row"><select id="sc">${Object.keys(E.SCEN).map(k=>`<option>${k}</option>`).join('')}</select>
 seed <input id="sd" type="number" value="${S.seed||5}"> noise <select id="nz"><option value=".02">low</option><option value=".05" selected>medium</option><option value=".12">high</option></select>
@@ -49,7 +69,7 @@ function resHTML(){const{p,pr,det,label}=S.rec,cnt=E.CLS.map((c,i)=>pr.filter(q=
 <div class="card"><div class="mut">Raw</div><canvas id="c1" style="height:110px"></canvas><div class="mut" style="margin-top:8px">Filtered &amp; normalised, beats coloured by predicted class</div><canvas id="c2"></canvas>
 <input type="range" id="t0" min="0" max="${Math.max(0,dur-8).toFixed(1)}" step=".5" value="${S.t0}"></div>
 <div class="card"><h2>Beat-by-beat prediction (click a row)</h2><div class="sc"><table><tr><th>#</th><th>t (s)</th><th>Class</th><th>Score</th><th>Margin</th><th>Flag</th></tr>${pr.map((q,i)=>`<tr class="cl ${i===S.sel?'sel':''}" data-i="${i}"><td>${i}</td><td>${(p.rows[i].r/E.FS).toFixed(2)}</td><td>${pill(E.CLS[q.k])}</td><td>${f4(q.sc[q.k])}</td><td>${f4(q.margin)}</td><td>${q.none?'no rule fired':q.margin<.15?'uncertain':''}</td></tr>`).join('')}</table></div></div><div id="ex"></div>`}
-function draw(){const{p,pr}=S.rec;plot($('#c1'),[{y:p.x,c:'#8a98b3'}],{t0:S.t0});plot($('#c2'),[{y:p.norm,c:'#e6ecf5'}],{t0:S.t0,marks:p.rows.map((r,i)=>({i:r.r,c:COL[E.CLS[pr[i].k]],t:E.CLS[pr[i].k],sel:i===S.sel}))});explain()}
+function draw(){const{p,pr}=S.rec;plot($('#c1'),[{y:p.x,c:getComputedStyle(document.documentElement).getPropertyValue('--muted-2').trim()||'#8a98b3'}],{t0:S.t0});plot($('#c2'),[{y:p.norm,c:getComputedStyle(document.documentElement).getPropertyValue('--chart-line').trim()||'#e6ecf5'}],{t0:S.t0,marks:p.rows.map((r,i)=>({i:r.r,c:COL[E.CLS[pr[i].k]],t:E.CLS[pr[i].k],sel:i===S.sel}))});explain()}
 const term=(m,[ci,t])=>`${FN[m.cols[ci]]} is ${E.TN[t]}`;
 function explain(){if(!S.rec||!$('#ex'))return;const q=S.rec.pr[S.sel],m=S.M.mB;
  $('#ex').innerHTML=`<div class="card"><h2>Beat ${S.sel}: ${pill(E.CLS[q.k])} ${E.CN[E.CLS[q.k]]}</h2>${E.CLS.map((c,i)=>`<div class="row" style="margin:3px 0">${pill(c)}<div style="flex:1"><div class="bar" style="width:${100*q.sc[i]}%;background:${COL[c]}"></div></div><span class="mut" style="width:50px">${f4(q.sc[i])}</span></div>`).join('')}
@@ -62,9 +82,11 @@ features:()=>{if(!S.rec)return;const draw1=()=>{const b=S.rec.p.rows[S.sel].beat
 rough:()=>{$('#rt').onclick=()=>{$('#rm').textContent='Training…';setTimeout(()=>{S.M=E.train({tol:+$('#tl').value,bins:+$('#bn').value});S.fz=0;if(S.rec)analyze(S.rec.p.x,E.FS,S.rec.ann,S.rec.label);go('rough')},30)}},
 fuzzy:()=>{const m=S.M.mB,paint=()=>{const cv=$('#mc'),d=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*d;cv.height=h*d;const g=cv.getContext('2d');g.scale(d,d);const c=m.cen[S.fz],sp=c[2]-c[0]||1,a=c[0]-sp*.6,z=c[2]+sp*.6,X=v=>(v-a)/(z-a)*w;
   ['#4ade80','#fbbf24','#f87171'].forEach((col,t)=>{g.strokeStyle=col;g.lineWidth=2;g.beginPath();for(let i=0;i<=200;i++){const v=a+(z-a)*i/200,y=h-6-E.mu(c,t,v)*(h-16);i?g.lineTo(X(v),y):g.moveTo(X(v),y)}g.stroke();g.fillStyle=col;g.fillText(E.TN[t],X(c[t])-8,12)});
-  if(S.rec){const v=S.rec.p.rows[S.sel].f[m.cols[S.fz]];g.setLineDash([4,4]);g.strokeStyle='#fff';g.beginPath();g.moveTo(X(v),0);g.lineTo(X(v),h);g.stroke();g.setLineDash([])}},
+  if(S.rec){const v=S.rec.p.rows[S.sel].f[m.cols[S.fz]];g.setLineDash([4,4]);g.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--chart-cursor').trim()||'#fff';g.beginPath();g.moveTo(X(v),0);g.lineTo(X(v),h);g.stroke();g.setLineDash([])}},
  rl=()=>{const k=+$('#rc').value;$('#rl').innerHTML=`<table><tr><th>Class</th><th>IF</th><th>Weight</th></tr>${m.rules.filter(r=>k<0||r.cls===k).map(r=>`<tr><td>${pill(E.CLS[r.cls])}</td><td>${r.ts.map(t=>term(m,t)).join(' AND ')}</td><td>${f4(r.w)}</td></tr>`).join('')}</table>`};
  paint();rl();$('#ff').onchange=e=>{S.fz=+e.target.value;paint()};$('#rc').onchange=rl}};
 function wire(){draw();$('#t0').oninput=e=>{S.t0=+e.target.value;draw()};$('.sc table').onclick=e=>{const tr=e.target.closest('tr.cl');if(!tr)return;S.sel=+tr.dataset.i;document.querySelectorAll('tr.cl').forEach(r=>r.classList.toggle('sel',r===tr));const t=S.rec.p.rows[S.sel].r/E.FS;if(t<S.t0||t>S.t0+8){S.t0=Math.max(0,Math.min(+$('#t0').max,Math.floor(t-2)));$('#t0').value=S.t0}draw()}}
+setTheme(document.documentElement.dataset.theme==='dark'?'dark':'light');
+addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar()});
 addEventListener('resize',()=>{if(S.view==='analyze'&&S.rec)draw();if(S.view==='fuzzy')A.fuzzy()});
 setTimeout(()=>{S.M=E.train();const r=sample('mixed',5,.05);analyze(r.x,E.FS,r.ann,'synthetic · mixed');$('#ld').remove();go('overview')},50);
