@@ -1,25 +1,98 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rough-Fuzzy ECG Research Platform</title>
-<style>
-:root{--bg:#0b1220;--card:#131c2e;--bd:#24304a;--tx:#e6ecf5;--mut:#8a98b3;--ac:#38bdf8}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
-header{padding:14px 20px;border-bottom:1px solid var(--bd);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-h1{font-size:18px;margin:0}.tag{font-size:11px;color:#fbbf24;border:1px solid #fbbf2455;padding:2px 8px;border-radius:99px}
-nav{display:flex;gap:6px;padding:10px 20px;flex-wrap:wrap;border-bottom:1px solid var(--bd)}
-nav button,.btn{background:var(--card);color:var(--tx);border:1px solid var(--bd);padding:7px 12px;border-radius:8px;cursor:pointer;font:inherit}
-nav button.on,.btn.pri{background:var(--ac);color:#04121f;border-color:var(--ac);font-weight:600}
-main{padding:20px;max-width:1200px;margin:auto}.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:14px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.kpi{background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:10px}
-.kpi b{display:block;font-size:20px}.kpi span,.mut{color:var(--mut);font-size:12px}
-canvas{width:100%;height:170px;display:block;background:var(--bg);border-radius:8px;border:1px solid var(--bd)}
-table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:5px 8px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}th{color:var(--mut);font-weight:500}
-.sc{overflow:auto;max-height:340px}tr.cl{cursor:pointer}tr.cl:hover,tr.sel{background:#1b2a47}
-.pill{padding:1px 8px;border-radius:99px;color:#04121f;font-weight:700;font-size:12px}
-select,input{background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:6px 8px;font:inherit}input[type=number]{width:80px}input[type=range]{width:100%}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}.bar{height:8px;border-radius:4px;background:var(--ac)}
-h2{font-size:15px;margin:0 0 10px}#ld{position:fixed;inset:0;background:#0b1220ee;display:flex;align-items:center;justify-content:center;font-size:16px;z-index:9}
-</style></head><body>
-<div id="ld">Training Rough-Fuzzy models in your browser…</div>
-<header><h1>🫀 Rough-Fuzzy ECG Research Platform</h1><span class="tag">Research prototype · not for clinical use</span></header>
-<nav id="nav"></nav><main id="v"></main>
-<script src="core.js"></script><script src="app.js"></script></body></html>
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f5f7">
+  <meta name="description" content="An academic research workspace for exploring ECG signals with rough-set feature reduction and fuzzy-rule classification.">
+  <title>PulseLab — ECG Research Workspace</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    (() => {
+      try {
+        const saved = localStorage.getItem('pulselab-theme');
+        if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
+      } catch (_) { /* Storage may be unavailable in restricted browser contexts. */ }
+    })();
+  </script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="#overview" aria-label="PulseLab home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none"><path d="M4 17h6l3.2-8 5.1 15 3.1-7H28" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="brand-copy"><strong>PulseLab</strong><small>ECG RESEARCH</small></span>
+      </a>
+
+      <div class="sidebar-section-label">WORKSPACE</div>
+      <nav id="nav" class="side-nav" aria-label="Research workspace"></nav>
+
+      <div class="sidebar-spacer"></div>
+      <section class="sidebar-status" aria-label="Research mode">
+        <div class="status-topline"><span class="status-dot"></span><span>Research environment</span></div>
+        <strong>Simulation mode</strong>
+        <p>Current browser models are trained on synthetic ECG data.</p>
+        <span class="status-label">NOT CLINICALLY VALIDATED</span>
+      </section>
+      <div class="sidebar-bottom">
+        <span class="sidebar-avatar" aria-hidden="true">PL</span>
+        <span><strong>Research workspace</strong><small>Local browser session</small></span>
+        <span class="local-lock" title="Processing runs locally">⌑</span>
+      </div>
+    </aside>
+
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+    <div class="app-main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-button mobile-menu" id="sidebar-toggle" type="button" aria-label="Open navigation" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <div class="breadcrumb"><span>PulseLab</span><span class="crumb-separator">/</span><strong id="breadcrumb-current">Overview</strong></div>
+        </div>
+        <div class="topbar-actions">
+          <div class="dataset-chip"><span class="dataset-chip-dot"></span><span>SIMULATED DATA</span></div>
+          <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch appearance">
+            <span class="theme-icon theme-icon-sun" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg></span>
+            <span class="theme-icon theme-icon-moon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20.2 15.1A8.5 8.5 0 0 1 8.9 3.8 8.6 8.6 0 1 0 20.2 15.1Z"/></svg></span>
+            <span class="theme-toggle-label">Appearance</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace" id="main-content">
+        <section class="page-intro" aria-live="polite">
+          <div>
+            <div class="page-eyebrow" id="page-eyebrow">RESEARCH OVERVIEW</div>
+            <h1 id="page-title">ECG research, made interpretable.</h1>
+            <p id="page-subtitle">Explore signal processing, rough-set feature reduction and fuzzy-rule classification in one research workspace.</p>
+          </div>
+          <div class="page-intro-meta"><span class="live-pulse"></span> Browser-based analysis</div>
+        </section>
+        <section id="v" class="view-content" aria-label="Workspace content"></section>
+      </main>
+
+      <footer class="app-footer">
+        <span>PulseLab · Academic research prototype</span>
+        <span>Not for diagnosis, treatment or clinical decision-making.</span>
+      </footer>
+    </div>
+  </div>
+
+  <div id="ld" class="loading-screen" role="status" aria-live="polite">
+    <div class="loading-card">
+      <span class="loading-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M4 17h6l3.2-8 5.1 15 3.1-7H28" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <div class="loading-title">Preparing your workspace</div>
+      <p>Training the synthetic research benchmark in your browser…</p>
+      <span class="loading-track"><i></i></span>
+    </div>
+  </div>
+
+  <script src="core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

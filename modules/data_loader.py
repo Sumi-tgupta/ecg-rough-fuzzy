@@ -30,16 +30,25 @@ def all_record_ids() -> list:
     return sorted(set(config.DS1 + config.DS2 + config.PACED_RECORDS), key=int)
 
 
+def _record_files_complete(record_id: str, data_dir: Path) -> bool:
+    base = Path(data_dir) / str(record_id)
+    return base.with_suffix(".hea").exists() and base.with_suffix(".dat").exists() and base.with_suffix(".atr").exists()
+
+
 def available_records(data_dir: Path = DATA_DIR) -> list:
-    return sorted({p.stem for p in Path(data_dir).glob("*.hea")},
-                  key=lambda s: int(s) if s.isdigit() else 0)
+    root = Path(data_dir)
+    return sorted(
+        {p.stem for p in root.glob("*.hea") if _record_files_complete(p.stem, root)},
+        key=lambda s: int(s) if s.isdigit() else 0,
+    )
 
 
 def download_records(record_ids=None, data_dir: Path = DATA_DIR, progress=None) -> list:
     """Download records from PhysioNet; returns ids available locally afterwards."""
     import wfdb
     record_ids = list(record_ids or all_record_ids())
-    todo = [r for r in record_ids if not (Path(data_dir) / f"{r}.hea").exists()]
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
+    todo = [str(r) for r in record_ids if not _record_files_complete(str(r), Path(data_dir))]
     for i, rid in enumerate(todo):
         try:
             wfdb.dl_database("mitdb", dl_dir=str(data_dir), records=[rid])
@@ -47,15 +56,15 @@ def download_records(record_ids=None, data_dir: Path = DATA_DIR, progress=None) 
             log.error("download failed for %s: %s", rid, exc)
         if progress:
             progress((i + 1) / max(len(todo), 1), f"Downloading record {rid}")
-    return [r for r in record_ids if (Path(data_dir) / f"{r}.hea").exists()]
+    return [str(r) for r in record_ids if _record_files_complete(str(r), Path(data_dir))]
 
 
 def load_record(record_id: str, data_dir: Path = DATA_DIR) -> Record:
     import wfdb
     rid = str(record_id)
     base = Path(data_dir) / rid
-    if not base.with_suffix(".hea").exists():
-        raise RecordError(f"Record {rid} not found in {data_dir}. Download it first.")
+    if not _record_files_complete(rid, Path(data_dir)):
+        raise RecordError(f"Record {rid} is missing one or more WFDB files (.hea, .dat, .atr) in {data_dir}. Download it first.")
     try:
         rec = wfdb.rdrecord(str(base))
         ann = wfdb.rdann(str(base), "atr")
@@ -63,6 +72,8 @@ def load_record(record_id: str, data_dir: Path = DATA_DIR) -> Record:
         raise RecordError(f"Could not read record {rid}: {exc}") from exc
     if rec.p_signal is None or rec.p_signal.ndim != 2 or not np.isfinite(rec.p_signal).any():
         raise RecordError(f"Record {rid} has no valid signal")
+    if not np.isfinite(rec.fs) or rec.fs <= 0:
+        raise RecordError(f"Record {rid} has invalid sampling frequency: {rec.fs}")
     sig = np.nan_to_num(rec.p_signal.astype(np.float64), nan=0.0)
     samples, symbols = np.asarray(ann.sample), np.asarray(ann.symbol)
     keep = np.array([s in AAMI_MAP for s in symbols], dtype=bool)
